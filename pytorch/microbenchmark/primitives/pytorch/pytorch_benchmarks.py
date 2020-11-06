@@ -1,32 +1,34 @@
+import string
 import time
 import numpy as np
+import os
+import random
 
 import torch
 import torch.distributed as dist
 
 import ray
 
+pytorch_cluster_file = "tcp://localhost:23456"
 
-@ray.remote(resources={'machine:1'})
+@ray.remote(num_gpus=1)
 class PyTorchBenchmarkWorker:
     def __init__(self,
                  world_size,
                  world_rank,
                  object_size,
-                 backend='nccl',
-                 tensor_type='gpu'):
+                 backend='nccl'):
         self.world_size = world_size
         self.world_rank = world_rank
         self.object_size = object_size
         self.backend = backend
-        self.tensor_type = tensor_type
-        self.message = []
+        self.message = None
 
         self.setup()
 
     def setup(self):
         dist.init_process_group(backend=self.backend,
-                                init_method="file:///users/hzhang2/projects/pytorch_benchmark",
+                                init_method=pytorch_cluster_file,
                                 world_size=self.world_size,
                                 rank=self.world_rank)
 
@@ -34,12 +36,12 @@ class PyTorchBenchmarkWorker:
         self.message = self.create_tensor()
         return True
 
-    def create_tensor(self):
+    def create_tensor(self, value=1.0):
         num_floats = self.object_size // 4
-        if self.tensor_type == 'gpu':
-            t = torch.cuda.FloatTensor(num_floats).fill_(1.0)
+        if self.backend == 'nccl':
+            t = torch.cuda.FloatTensor(num_floats).fill_(value)
         else:
-            t = torch.FloatTensor(num_floats).fill_(1.0)
+            t = torch.FloatTensor(num_floats).fill_(value)
         return t
 
     def broadcast(self, src_rank):
@@ -68,7 +70,7 @@ class PyTorchBenchmarkWorker:
         return duration
 
     def gather(self, dst_rank):
-        if self.rank == dst_rank:
+        if self.world_rank == dst_rank:
             recv = [self.create_tensor() for _ in range(self.world_size)]
         else:
             recv = None
@@ -79,14 +81,16 @@ class PyTorchBenchmarkWorker:
 
 
 class PyTorchBenchmarkWorkerPool:
-    def __init__(self, world_size, object_size):
+    def __init__(self,
+                 world_size,
+                 object_size,
+                 backend='nccl'):
         self.actors = []
         for world_rank in range(world_size):
-            self.actors.append(
-                PyTorchBenchmarkWorker.remote(world_size,
-                                              world_rank,
-                                              object_size)
-            )
+            self.actors.append(PyTorchBenchmarkWorker.remote(world_size,
+                                                             world_rank,
+                                                             object_size,
+                                                             backend=backend))
 
     def put_objects(self):
         rets = [w.put_object.remote() for w in self.actors]
@@ -104,36 +108,55 @@ class PyTorchBenchmarkWorkerPool:
         return len(self.actors)
 
 
-def pytorch_broadcast(world_size, object_size):
-    workers = PyTorchBenchmarkWorkerPool(world_size, object_size)
+def pytorch_broadcast(world_size,
+                      object_size,
+                      backend):
+    workers = PyTorchBenchmarkWorkerPool(world_size, object_size, backend=backend)
     src_rank = 0
+    workers.put_objects()
     object_id = workers[src_rank].put_object.remote()
     ray.wait([object_id], num_returns=1, timeout=None)
     durations = ray.get([w.broadcast.remote(src_rank) for w in workers])
+    del workers
     return max(durations)
 
-def pytorch_reduce(world_size, object_size):
-    workers = PyTorchBenchmarkWorkerPool(world_size, object_size)
+def pytorch_reduce(world_size,
+                   object_size,
+                   backend):
+    workers = PyTorchBenchmarkWorkerPool(world_size, object_size, backend=backend)
     dst_rank = 0
     workers.put_objects()
-    durations = ray.get([w.reduce(dst_rank) for w in workers])
+    durations = ray.get([w.reduce.remote(dst_rank) for w in workers])
+    del workers
     return max(durations)
 
-def pytorch_gather(world_size, object_size):
-    workers = PyTorchBenchmarkWorkerPool(world_size, object_size)
+
+def pytorch_gather(world_size,
+                   object_size,
+                   backend):
+    workers = PyTorchBenchmarkWorkerPool(world_size, object_size, backend=backend)
     dst_rank = 0
     workers.put_objects()
-    durations = ray.get([w.gather(dst_rank) for w in workers])
+    durations = ray.get([w.gather.remote(dst_rank) for w in workers])
+    del workers
     return max(durations)
 
-def pytorch_allreduce(world_size, object_size):
-    workers = PyTorchBenchmarkWorkerPool(world_size, object_size)
+
+def pytorch_allreduce(world_size,
+                      object_size,
+                      backend):
+    workers = PyTorchBenchmarkWorkerPool(world_size, object_size, backend=backend)
     workers.put_objects()
-    durations = ray.get([w.allreduce() for w in workers])
+    durations = ray.get([w.allreduce.remote() for w in workers])
+    del workers
     return max(durations)
 
-def pytorch_allgather(world_size, object_size):
-    workers = PyTorchBenchmarkWorkerPool(world_size, object_size)
+
+def pytorch_allgather(world_size,
+                      object_size,
+                      backend):
+    workers = PyTorchBenchmarkWorkerPool(world_size, object_size, backend=backend)
     workers.put_objects()
-    durations = ray.get([w.allgather() for w in workers])
+    durations = ray.get([w.allgather.remote() for w in workers])
+    del workers
     return max(durations)
