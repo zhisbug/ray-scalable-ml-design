@@ -79,6 +79,19 @@ class PyTorchBenchmarkWorker:
         duration = time.time() - start
         return duration
 
+    def send(self, dst_rank):
+        start = time.time()
+        torch.distributed.send(self.message, dst_rank)
+        duration = time.time() - start
+        return duration
+
+    def recv(self, src_rank):
+        recv_buffer = self.create_tensor()
+        start = time.time()
+        torch.distributed.recv(recv_buffer, src_rank)
+        duration = time.time() - start
+        return duration
+
 
 class PyTorchBenchmarkWorkerPool:
     def __init__(self,
@@ -158,5 +171,17 @@ def pytorch_allgather(world_size,
     workers = PyTorchBenchmarkWorkerPool(world_size, object_size, backend=backend)
     workers.put_objects()
     durations = ray.get([w.allgather.remote() for w in workers])
+    del workers
+    return max(durations)
+
+
+def pytorch_sendrecv(world_size,
+                     object_size,
+                     backend):
+    workers = PyTorchBenchmarkWorkerPool(world_size, object_size, backend=backend)
+    workers.put_objects()
+    src_rank = 0
+    dst_rank = 1
+    durations = ray.get([workers[src_rank].send.remote(dst_rank), workers[dst_rank].recv.remote(src_rank)])
     del workers
     return max(durations)

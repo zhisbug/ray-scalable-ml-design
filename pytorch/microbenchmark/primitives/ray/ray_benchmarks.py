@@ -1,5 +1,6 @@
 import time
 import numpy as np
+import random
 import ray
 
 import torch
@@ -158,3 +159,14 @@ def ray_allgather(world_size, object_size, backend):
     durations = ray.get(results)
     del actor_pool
     return max(durations)
+
+
+def ray_sendrecv(world_size, object_size, backend):
+    actor_pool = RayBenchmarkActorPool(world_size, object_size, backend)
+    object_ids = actor_pool.prepare_objects()
+    src_rank, dst_rank = random.sample(range(world_size), 2)
+    duration = ray.get(actor_pool[dst_rank].get_objects.remote([object_ids[src_rank]]))
+    del actor_pool
+    return duration
+
+

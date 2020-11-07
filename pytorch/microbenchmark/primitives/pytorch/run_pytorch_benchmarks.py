@@ -48,7 +48,7 @@ if __name__ == "__main__":
                 algorithms = ['pytorch_broadcast', 'pytorch_reduce', 'pytorch_allreduce', 'pytorch_allgather']
             elif args.backend == 'gloo':
                 algorithms = ['pytorch_broadcast', 'pytorch_gather', 'pytorch_reduce', 'pytorch_allreduce',
-                              'pytorch_allgather']
+                              'pytorch_allgather', 'pytorch_sendrecv']
             else:
                 raise ValueError('Cannot recognize the backend: {}'.format(args.backend))
             world_sizes = [2]

@@ -45,8 +45,8 @@ if __name__ == "__main__":
         assert args.world_size is None and args.object_size is None
         write_to = 'ray-microbenchmark-' + args.backend + '.csv'
         with open(write_to, "w") as f:
-            algorithms = ['ray_broadcast', 'ray_gather', 'ray_reduce', 'ray_allreduce', 'ray_allgather']
-            # algorithms = ['ray_reduce']
+            # algorithms = ['ray_broadcast', 'ray_gather', 'ray_reduce', 'ray_allreduce', 'ray_allgather', 'ray_sendrecv']
+            algorithms = ['ray_sendrecv']
             world_sizes = [2]
             object_sizes = [2 ** 10, 2 ** 15, 2 ** 20, 2 ** 25, 2 ** 30]
             for algorithm in algorithms:
