@@ -2,26 +2,20 @@ import time
 import numpy as np
 import ray
 
-import grpc
-# import object_store_pb2
-# import object_store_pb2_grpc
+import torch
 
-
-# def barrier(notification_address, notification_port, world_size):
-#     channel = grpc.insecure_channel(notification_address + ':' + str(notification_port))
-#     stub = object_store_pb2_grpc.NotificationServerStub(channel)
-#     request = object_store_pb2.BarrierRequest(num_of_nodes=world_size)
-#     reply = stub.Barrier(request)
-
-
-@ray.remote(resources={'machine': 1})
+# @ray.remote(resources={'machine': 1})
+@ray.remote(num_gpus=1)
 class RayBenchmarkWorker:
-    def __init__(self, notification_address, world_size, world_rank, object_size):
-        self.notification_address = notification_address
-        self.notification_port = 7777
+    def __init__(self,
+                 world_size,
+                 world_rank,
+                 object_size,
+                 backend='gpu'):
         self.world_size = world_size
         self.world_rank = world_rank
         self.object_size = object_size
+        self.backend = backend
 
     def barrier(self):
         # We sleep for a while to make sure all later
@@ -30,11 +24,22 @@ class RayBenchmarkWorker:
         time.sleep(1)
         # barrier(self.notification_address, self.notification_port, self.world_size)
 
-    def put_object(self):
-        return ray.put(np.ones(self.object_size // 4, dtype=np.float32))
+    def create_tensor(self, value=1.0):
+        num_floats = self.object_size // 4
+        if self.backend == 'gpu':
+            t = torch.cuda.FloatTensor(num_floats).fill_(value)
+        else:
+            t = torch.FloatTensor(num_floats).fill_(value)
+        return t
+
+    def put_object(self, value=1.0):
+        t = self.create_tensor()
+        return ray.put(t)
 
     def get_objects(self, object_ids):
         object_ids = ray.get(object_ids)
+
+        # timing
         start = time.time()
         _ = ray.get(object_ids)
         duration = time.time() - start
@@ -50,22 +55,30 @@ class RayBenchmarkWorker:
     @ray.method(num_returns=2)
     def reduce_objects(self, object_ids):
         object_ids = ray.get(object_ids)
+
+        reduce_result = self.create_tensor(0.0)
         start = time.time()
-        reduce_result = np.zeros(self.object_size // 4, dtype=np.float32)
         for object_id in object_ids:
             array = ray.get(object_id)
             reduce_result += array
         duration = time.time() - start
+        print(reduce_result)
         result_id = ray.put(reduce_result)
         return result_id, duration
 
 
 class RayBenchmarkActorPool:
-    def __init__(self, notification_address, world_size, object_size):
+    def __init__(self,
+                 world_size,
+                 object_size,
+                 backend='gpu'):
         self.actors = []
         for world_rank in range(world_size):
             self.actors.append(
-                RayBenchmarkWorker.remote(notification_address, world_size, world_rank, object_size))
+                RayBenchmarkWorker.remote(world_size,
+                                          world_rank,
+                                          object_size,
+                                          backend=backend))
 
     def barrier(self):
         return [w.barrier.remote() for w in self.actors]
@@ -87,46 +100,61 @@ class RayBenchmarkActorPool:
         return len(self.actors)
 
 
-def ray_multicast(notification_address, world_size, object_size):
-    actor_pool = RayBenchmarkActorPool(notification_address, world_size, object_size)
-    object_id = actor_pool[0].put_object.remote()
-    # wait until we have put that object
-    ray.wait([object_id], num_returns=1, timeout=None)
-    durations = ray.get([w.get_objects.remote([object_id]) for w in actor_pool.actors])
+def ray_broadcast(world_size, object_size, backend):
+    actor_pool = RayBenchmarkActorPool(world_size, object_size, backend)
+    # Caution (Hao):
+    # Ideally, I don't have to put objects on all actors for `broadcast`, but unfortunately if I don't do so,
+    # the first time when a cuda tensor is launched on an actors, a big overhead will be incurred,
+    # and be count in this benchmarking code
+    object_ids = actor_pool.prepare_objects()
+    # object_id = actor_pool[0].put_object.remote()
+    # # wait until we have put that object
+    # ray.wait([object_id], num_returns=1, timeout=None)
+    durations = ray.get([w.get_objects.remote([object_ids[0]]) for w in actor_pool.actors])
+    del actor_pool
     return max(durations)
 
 
-def ray_reduce(notification_address, world_size, object_size):
-    actor_pool = RayBenchmarkActorPool(notification_address, world_size, object_size)
+def ray_reduce(world_size, object_size, backend):
+    actor_pool = RayBenchmarkActorPool(world_size, object_size, backend)
     object_ids = actor_pool.prepare_objects()
     reduction_id, duration_id = actor_pool[0].reduce_objects.remote(object_ids)
-    return ray.get(duration_id)
+    duration = ray.get(duration_id)
+    del actor_pool
+    return duration
 
 
 # TODO: the timing is not precise
-def ray_allreduce(notification_address, world_size, object_size):
-    actor_pool = RayBenchmarkActorPool(notification_address, world_size, object_size)
+def ray_allreduce(world_size, object_size, backend):
+    # Apparently this is not a typical implementation of allreduce, but the communication load is same.
+    # Also not the implementing ring allreduce using Ray's object store might be even slower than this one, cuz
+    # likely more ray tasks will be launched.
+    actor_pool = RayBenchmarkActorPool(world_size, object_size, backend)
     object_ids = actor_pool.prepare_objects()
-    actor_pool.barrier()
+    # actor_pool.barrier()
     reduction_id, duration_id = actor_pool[0].reduce_objects.remote(object_ids)
     results = [duration_id]
     for i in range(1, len(actor_pool)):
         results.append(actor_pool[i].get_objects_with_creation_time.remote([reduction_id]))
     durations = ray.get(results)
+    del actor_pool
     return max(durations)
 
 
-def ray_gather(notification_address, world_size, object_size):
-    actor_pool = RayBenchmarkActorPool(notification_address, world_size, object_size)
+def ray_gather(world_size, object_size, backend):
+    actor_pool = RayBenchmarkActorPool(world_size, object_size, backend)
     object_ids = actor_pool.prepare_objects()
-    return ray.get(actor_pool[0].get_objects.remote(object_ids))
+    duration = ray.get(actor_pool[0].get_objects.remote(object_ids))
+    del actor_pool
+    return duration
 
 
 # TODO: the timing is not precise
-def ray_allgather(notification_address, world_size, object_size):
-    actor_pool = RayBenchmarkActorPool(notification_address, world_size, object_size)
+def ray_allgather(world_size, object_size, backend):
+    actor_pool = RayBenchmarkActorPool(world_size, object_size, backend)
     object_ids = actor_pool.prepare_objects()
-    actor_pool.barrier()
+    # actor_pool.barrier()
     results = [w.get_objects.remote(object_ids) for w in actor_pool.actors]
     durations = ray.get(results)
+    del actor_pool
     return max(durations)

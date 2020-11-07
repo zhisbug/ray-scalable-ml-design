@@ -7,7 +7,7 @@ import ray
 
 parser = argparse.ArgumentParser(description="PyTorch microbenchmarks")
 parser.add_argument('--test_name', type=str, default='auto', required=False,
-                    help='Name of the test (multicast, reduce, allreduce, gather, allgather)')
+                    help='Name of the test (broadcast, reduce, allreduce, gather, allgather)')
 parser.add_argument('-n', '--world-size', type=int, required=False,
                     help='Size of the collective processing group')
 parser.add_argument('-s', '--object-size', type=int, required=False,
@@ -56,6 +56,6 @@ if __name__ == "__main__":
             for algorithm in algorithms:
                 for world_size in world_sizes:
                     for object_size in object_sizes:
-                        mean, std = test_with_mean_std(5, algorithm, world_size, object_size)
+                        mean, std = test_with_mean_std(5, algorithm, world_size, object_size, backend=args.backend)
                         print(f"{algorithm}, {world_size}, {object_size}, {mean}, {std}")
                         f.write(f"{algorithm},{world_size},{object_size},{mean},{std}\n")
