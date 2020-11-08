@@ -55,7 +55,7 @@ if __name__ == "__main__":
                 else:
                     raise ValueError('Cannot recognize the backend: {}'.format(args.backend))
                 world_sizes = [2]
-                object_sizes = [2 ** 10, 2 ** 15, 2 ** 20, 2 ** 25, 2 ** 30, 2 ** 35, 2 ** 40]
+                object_sizes = [2 ** 10, 2 ** 15, 2 ** 20, 2 ** 25, 2 ** 30]
                 for algorithm in algorithms:
                     for world_size in world_sizes:
                         for object_size in object_sizes:

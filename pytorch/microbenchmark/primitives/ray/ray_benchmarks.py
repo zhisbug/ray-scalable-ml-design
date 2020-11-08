@@ -29,12 +29,14 @@ class RayBenchmarkWorker:
         num_floats = self.object_size // 4
         if self.backend == 'gpu':
             t = torch.cuda.FloatTensor(num_floats).fill_(value)
-        else:
+        elif self.backend == 'cpu':
             t = torch.FloatTensor(num_floats).fill_(value)
+        else:
+            raise ValueError('Unrecognized backend: {}'.format(self.backend))
         return t
 
     def put_object(self, value=1.0):
-        t = self.create_tensor()
+        t = self.create_tensor(value)
         return ray.put(t)
 
     def get_objects(self, object_ids):
@@ -63,7 +65,6 @@ class RayBenchmarkWorker:
             array = ray.get(object_id)
             reduce_result += array
         duration = time.time() - start
-        print(reduce_result)
         result_id = ray.put(reduce_result)
         return result_id, duration
 
