@@ -63,7 +63,7 @@ def draw(ray, other, fig_name):
     # ax.set_xlim(xmin=0.0, xmax=2)
     xs = ind + width / 2
     ax.set_xticks(xs)
-    ax.set_xticklabels(('1KB', '0.5MB', '1MB', '0.5GB', '1GB'), fontdict = labelfont)
+    ax.set_xticklabels(('1KB', '32KB', '1MB', '32MB', '1GB'), fontdict = labelfont)
     ax.set_ylabel('Latency (micro sec)', fontdict = labelfont)
     ax.set_ylim(ymax=7, ymin=1)
     ax.set_yticks([1, 2, 3, 4, 5, 6])
