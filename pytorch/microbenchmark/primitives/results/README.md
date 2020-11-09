@@ -1,8 +1,9 @@
 #  Benchmarking Results
 ## Summary
-- Ray tested collectives: `reduce`, `broadcast`, `allreduce`, `allgather`, `gather`, `send-recv`
-- PyTorch-NCCL tested collectives: `reduce`, `broadcast`, `allreduce`, `allgather`
-- PyTorch-GLOO tested collectives: `reduce`, `broadcast`, `allreduce`, `allgather`, `gather`, `send-recv`
+- [Ray tested collectives](https://github.com/zhisbug/ray-scalable-ml-design/tree/main/pytorch/microbenchmark/primitives/ray): `reduce`, `broadcast`, `allreduce`, `allgather`, `gather`, `send-recv`
+- [PyTorch-NCCL tested collectives](https://github.com/zhisbug/ray-scalable-ml-design/tree/main/pytorch/microbenchmark/primitives/pytorch): `reduce`, `broadcast`, `allreduce`, `allgather`
+- [PyTorch-GLOO tested collectives](https://github.com/zhisbug/ray-scalable-ml-design/tree/main/pytorch/microbenchmark/primitives/pytorch): `reduce`, `broadcast`, `allreduce`, `allgather`, `gather`, `send-recv`
+
 
 ##  Single-node Multi-GPU Setting
 
