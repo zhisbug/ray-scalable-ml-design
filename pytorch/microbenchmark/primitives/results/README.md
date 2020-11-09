@@ -9,7 +9,7 @@
 
 ### Setup
 - Cluster: **only 1** node
-- Node hardware: each node is with **2 GeForce RTX 2080**
+- Node hardware: each node is with **2 GeForce RTX 2080**, **1-Gigabit** Ethernet switch
 - Node software: CUDA 10.1, torch==1.7.0+cu101
 - ~~CPU tensor (not tested): `torch.FloatTensor(size).fill_(value)`~~
 - GPU tensor: `torch.cuda.FloatTensor(size).fill_(value)`
