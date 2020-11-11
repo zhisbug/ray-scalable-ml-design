@@ -3,34 +3,48 @@ import time
 import numpy as np
 import os
 import random
+import socket
 
 import torch
 import torch.distributed as dist
 
 import ray
 
-pytorch_cluster_file = "tcp://localhost:23456"
+#pytorch_cluster_file = "tcp://10.117.1.2:34567"
+pytorch_cluster_file = "file:///users/hzhang2/projects/ray-scalable-ml-design/pytorch/microbenchmark/primitives/pytorch/tmp/"
 
+
+#@ray.remote(resources={'machine': 1})
 @ray.remote(num_gpus=1)
 class PyTorchBenchmarkWorker:
     def __init__(self,
                  world_size,
                  world_rank,
                  object_size,
+                 exp_name,
                  backend='nccl'):
         self.world_size = world_size
         self.world_rank = world_rank
         self.object_size = object_size
         self.backend = backend
+        self.cluster_file = pytorch_cluster_file + exp_name
+        #self.cluster_file = pytorch_cluster_file
         self.message = None
 
-        self.setup()
-
-    def setup(self):
+    def gen_init_method(self):
+        if self.world_rank != 0:
+            raise ValueError('should not reach here...')
+        my_ip = socket.gethostbyname(socket.gethostname())
+        method = 'tcp://' + my_ip + ':34567'
+        return method
+    
+    def setup(self, init_method):
         dist.init_process_group(backend=self.backend,
-                                init_method=pytorch_cluster_file,
+                                #init_method=self.cluster_file,
+                                init_method=init_method,
                                 world_size=self.world_size,
                                 rank=self.world_rank)
+        return True
 
     def put_object(self):
         self.message = self.create_tensor()
@@ -39,9 +53,9 @@ class PyTorchBenchmarkWorker:
     def create_tensor(self, value=1.0):
         num_floats = self.object_size // 4
         if self.backend == 'nccl':
-            t = torch.cuda.FloatTensor(num_floats).fill_(value)
+            t = torch.cuda.FloatTensor(num_floats).fill_(self.world_rank + 0.11111111121)
         else:
-            t = torch.FloatTensor(num_floats).fill_(value)
+            t = torch.FloatTensor(num_floats).fill_(self.world_rank + 0.11111111121)
         return t
 
     def broadcast(self, src_rank):
@@ -97,25 +111,35 @@ class PyTorchBenchmarkWorkerPool:
     def __init__(self,
                  world_size,
                  object_size,
+                 exp_name,
                  backend='nccl'):
         self.actors = []
-        for world_rank in range(world_size):
-            self.actors.append(PyTorchBenchmarkWorker.remote(world_size,
-                                                             world_rank,
-                                                             object_size,
-                                                             backend=backend))
+
+        leading_actor = PyTorchBenchmarkWorker.remote(world_size, 0, object_size, exp_name, backend=backend)
+        method = ray.get(leading_actor.gen_init_method.remote())
+        self.actors.append(leading_actor)
+
+        for world_rank in range(1, world_size):
+            actor = PyTorchBenchmarkWorker.remote(world_size, world_rank, object_size, exp_name, backend=backend)
+            self.actors.append(actor)
+        ray.wait([actor.setup.remote(method) for actor in self.actors])
 
     def put_objects(self):
         rets = [w.put_object.remote() for w in self.actors]
         ray.wait(rets, num_returns=len(rets), timeout=None)
         return True
 
+    def release_actors(self):
+        ray.wait([w.__ray_terminate__.remote() for w in self.actors])
+        for w in self.actors:
+            ray.kill(w)
+
     def __getitem__(self, item):
         return self.actors[item]
 
-    def __del__(self):
-        for w in self.actors:
-            ray.kill(w)
+    #def __del__(self):
+    #    for w in self.actors:
+    #        ray.kill(w)
 
     def __len__(self):
         return len(self.actors)
@@ -123,65 +147,72 @@ class PyTorchBenchmarkWorkerPool:
 
 def pytorch_broadcast(world_size,
                       object_size,
-                      backend):
-    workers = PyTorchBenchmarkWorkerPool(world_size, object_size, backend=backend)
+                      backend,
+                      exp_name):
+    workers = PyTorchBenchmarkWorkerPool(world_size, object_size, exp_name, backend=backend)
     src_rank = 0
     workers.put_objects()
     object_id = workers[src_rank].put_object.remote()
     ray.wait([object_id], num_returns=1, timeout=None)
     durations = ray.get([w.broadcast.remote(src_rank) for w in workers])
-    del workers
+    workers.release_actors()
     return max(durations)
 
 def pytorch_reduce(world_size,
                    object_size,
-                   backend):
-    workers = PyTorchBenchmarkWorkerPool(world_size, object_size, backend=backend)
+                   backend,
+                   exp_name):
+    workers = PyTorchBenchmarkWorkerPool(world_size, object_size, exp_name, backend=backend)
     dst_rank = 0
     workers.put_objects()
     durations = ray.get([w.reduce.remote(dst_rank) for w in workers])
-    del workers
+    workers.release_actors()
     return max(durations)
 
 
 def pytorch_gather(world_size,
                    object_size,
-                   backend):
-    workers = PyTorchBenchmarkWorkerPool(world_size, object_size, backend=backend)
+                   backend,
+                   exp_name):
+    workers = PyTorchBenchmarkWorkerPool(world_size, object_size, exp_name, backend=backend)
     dst_rank = 0
     workers.put_objects()
     durations = ray.get([w.gather.remote(dst_rank) for w in workers])
-    del workers
+    workers.release_actors()
     return max(durations)
 
 
 def pytorch_allreduce(world_size,
                       object_size,
-                      backend):
-    workers = PyTorchBenchmarkWorkerPool(world_size, object_size, backend=backend)
+                      backend,
+                      exp_name):
+    workers = PyTorchBenchmarkWorkerPool(world_size, object_size, exp_name, backend=backend)
     workers.put_objects()
     durations = ray.get([w.allreduce.remote() for w in workers])
-    del workers
+    workers.release_actors()
     return max(durations)
 
 
 def pytorch_allgather(world_size,
                       object_size,
-                      backend):
-    workers = PyTorchBenchmarkWorkerPool(world_size, object_size, backend=backend)
+                      backend,
+                      exp_name):
+    workers = PyTorchBenchmarkWorkerPool(world_size, object_size, exp_name, backend=backend)
     workers.put_objects()
     durations = ray.get([w.allgather.remote() for w in workers])
-    del workers
+    workers.release_actors()
     return max(durations)
 
 
 def pytorch_sendrecv(world_size,
                      object_size,
-                     backend):
-    workers = PyTorchBenchmarkWorkerPool(world_size, object_size, backend=backend)
+                     backend,
+                     exp_name):
+    workers = PyTorchBenchmarkWorkerPool(world_size, object_size, exp_name, backend=backend)
     workers.put_objects()
     src_rank = 0
     dst_rank = 1
     durations = ray.get([workers[src_rank].send.remote(dst_rank), workers[dst_rank].recv.remote(src_rank)])
-    del workers
+    workers.release_actors()
     return max(durations)
+

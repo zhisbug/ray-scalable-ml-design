@@ -26,14 +26,17 @@ def test_with_mean_std(repeat_times,
     for i in range(repeat_times):
         print('Test case {}......'.format(i))
         test_case = pytorch_benchmarks.__dict__[test_name]
-        duration = test_case(world_size, object_size, backend)
+        # must be unique for pytorch processes to discover each other
+        exp_name = "{}-{}-{}-{}-{}".format(test_name, world_size, object_size, backend, i)
+        print(world_size, object_size, backend, exp_name)
+        duration = test_case(world_size, object_size, backend, exp_name)
         results.append(duration)
         time.sleep(5)
     return np.mean(results), np.std(results)
 
 
 if __name__ == "__main__":
-    ray.init(num_cpus=4, num_gpus=2)
+    ray.init(address='auto')
     test_name = 'pytorch_' + args.test_name
     assert test_name in pytorch_benchmarks.__dict__ or args.test_name == 'auto'
     if args.test_name != 'auto':
@@ -42,23 +45,34 @@ if __name__ == "__main__":
         print(f"{args.test_name},{args.world_size},{args.object_size},{mean},{std}")
     else:
         assert args.world_size is None and args.object_size is None
-        backends = ['nccl', 'gloo']
+        backends = ['gloo', 'nccl']
+        #backends = ['gloo']
+        #backends = ['nccl']
         for backend in backends:
             print("==== Testing backend {} ====".format(backend))
             write_to = 'pytorch-microbenchmark-' + backend + '.csv'
             with open(write_to, "w") as f:
                 if backend == 'nccl':
                     algorithms = ['pytorch_broadcast', 'pytorch_reduce', 'pytorch_allreduce', 'pytorch_allgather']
+                    #algorithms = ['pytorch_allreduce']
+                    repeat_time = 5
                 elif backend == 'gloo':
                     algorithms = ['pytorch_broadcast', 'pytorch_gather', 'pytorch_reduce', 'pytorch_allreduce',
                                   'pytorch_allgather', 'pytorch_sendrecv']
+                    #algorithms = ['pytorch_broadcast']
+                    repeat_time = 5
                 else:
                     raise ValueError('Cannot recognize the backend: {}'.format(args.backend))
-                world_sizes = [2]
-                object_sizes = [2 ** 10, 2 ** 15, 2 ** 20, 2 ** 25, 2 ** 30, 2 ** 35, 2 ** 40]
+                world_sizes = [2, 4, 8, 16]
+                #world_sizes = [16]
                 for algorithm in algorithms:
                     for world_size in world_sizes:
+                        if world_size in [8, 16] and algorithm in ['pytorch_allgather'] and backend == 'nccl':
+                            object_sizes = [2 ** 10, 2 ** 15, 2 ** 20, 2 ** 25, 2 ** 27] 
+                        else:
+                            object_sizes = [2 ** 10, 2 ** 15, 2 ** 20, 2 ** 25, 2 ** 30]
                         for object_size in object_sizes:
-                            mean, std = test_with_mean_std(5, algorithm, world_size, object_size, backend=backend)
+                            mean, std = test_with_mean_std(repeat_time, algorithm, world_size, object_size, backend=backend)
                             print(f"{backend}, {algorithm}, {world_size}, {object_size}, {mean}, {std}")
                             f.write(f"{algorithm},{world_size},{object_size},{mean},{std}\n")
+    ray.shutdown()

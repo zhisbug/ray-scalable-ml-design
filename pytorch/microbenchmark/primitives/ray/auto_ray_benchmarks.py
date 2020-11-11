@@ -34,7 +34,7 @@ def test_with_mean_std(repeat_times,
 
 
 if __name__ == "__main__":
-    ray.init(num_cpus=4, num_gpus=2)
+    ray.init(address='auto')
     test_name = 'ray_' + args.test_name
     assert test_name in ray_benchmarks.__dict__ or args.test_name == 'auto'
     if args.test_name != 'auto':
@@ -43,15 +43,23 @@ if __name__ == "__main__":
         print(f"{args.test_name},{args.world_size},{args.object_size},{mean},{std}")
     else:
         assert args.world_size is None and args.object_size is None
-        write_to = 'ray-microbenchmark-' + args.backend + '.csv'
-        with open(write_to, "w") as f:
-            # algorithms = ['ray_broadcast', 'ray_gather', 'ray_reduce', 'ray_allreduce', 'ray_allgather', 'ray_sendrecv']
-            algorithms = ['ray_sendrecv']
-            world_sizes = [2]
-            object_sizes = [2 ** 10, 2 ** 15, 2 ** 20, 2 ** 25, 2 ** 30]
-            for algorithm in algorithms:
-                for world_size in world_sizes:
-                    for object_size in object_sizes:
-                        mean, std = test_with_mean_std(5, algorithm, world_size, object_size, backend=args.backend)
-                        print(f"{algorithm}, {world_size}, {object_size}, {mean}, {std}")
-                        f.write(f"{algorithm},{world_size},{object_size},{mean},{std}\n")
+        backends = ['gpu', 'cpu']
+        for backend in backends:
+            print("==== Testing backend {} ====".format(backend))
+            write_to = 'ray-microbenchmark-' + backend + '.csv'
+            with open(write_to, "w") as f:
+                algorithms = ['ray_broadcast', 'ray_gather', 'ray_reduce', 'ray_allreduce', 'ray_allgather', 'ray_sendrecv']
+                #algorithms = ['ray_allreduce']
+                world_sizes = [2, 4, 8, 16]
+                #world_sizes = [16]
+                #object_sizes = [2 ** 30]
+                for algorithm in algorithms:
+                    for world_size in world_sizes:
+                        if world_size == 16 and algorithm in ['ray_gather', 'ray_allgather'] and backend == 'gpu':
+                            object_sizes = [2 ** 10, 2 ** 15, 2 ** 20, 2 ** 25, 2 ** 28] 
+                        else:
+                            object_sizes = [2 ** 10, 2 ** 15, 2 ** 20, 2 ** 25, 2 ** 30]
+                        for object_size in object_sizes:
+                            mean, std = test_with_mean_std(5, algorithm, world_size, object_size, backend=backend)
+                            print(f"{backend}, {algorithm}, {world_size}, {object_size}, {mean}, {std}")
+                            f.write(f"{algorithm},{world_size},{object_size},{mean},{std}\n")
