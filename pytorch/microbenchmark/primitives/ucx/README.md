@@ -1,0 +1,1 @@
+Refer to Lianmin's [benchmark results](https://github.com/merrymercy/gpu-comm/tree/master/round-trip-benchmark).
