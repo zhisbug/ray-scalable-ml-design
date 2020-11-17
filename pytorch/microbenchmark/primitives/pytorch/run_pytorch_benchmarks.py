@@ -33,7 +33,7 @@ def test_with_mean_std(repeat_times,
 
 
 if __name__ == "__main__":
-    ray.init(num_cpus=4, num_gpus=2)
+    ray.init(num_cpus=16, num_gpus=2)
     test_name = 'pytorch_' + args.test_name
     assert test_name in pytorch_benchmarks.__dict__ or args.test_name == 'auto'
     if args.test_name != 'auto':
