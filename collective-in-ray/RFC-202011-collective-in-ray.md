@@ -3,7 +3,8 @@
 | Status        | Proposed      |
 :-------------- |:---------------------------------------------------- |
 | **Author(s)** | Hao Zhang, Lianmin Zheng |
-| **Sponsor**   | Ion Stoica                 |
+| **Sponsor**   | Ion Stoica, Melih Elibol                 |
+| **Reviewer**  | |
 | **Updated**   | YYYY-MM-DD                                           |
 
 
