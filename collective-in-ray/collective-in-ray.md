@@ -9,7 +9,7 @@
 
 ## Objective
 
-This RFC proposes to add a set of *Python-based* collective and send/recv communication APIs into Ray, for *both CPU and GPU* tensors, based on several established collective communication backends, including [NCCL](https://github.com/NVIDIA/nccl), (MPI)[https://github.com/mpi4py/mpi4py], as well as the original Ray object store (hence gRPC backend). 
+This RFC proposes to add a set of *Python-based* collective and send/recv communication APIs into Ray, for *both CPU and GPU* tensors, based on several established collective communication backends, including [NCCL](https://github.com/NVIDIA/nccl), [MPI](https://github.com/mpi4py/mpi4py), as well as the original Ray object store (hence gRPC backend). 
 
 This set of APIs will enable Ray users to conveniently perform collective communication of several types of Python tensors in Ray actors and tasks, for their performance-critical distributed applications, such as (GPU-based) distributed machine learning, or other HPC applications. 
 
