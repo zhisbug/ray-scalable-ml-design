@@ -120,7 +120,7 @@ class CupyWorker:
 		self.recv = cupy.zeros((10,), dtype=cupy.float32)
 	
 	def setup(self, rank):
-		ray.init_collective_group(collective_group='my_name',
+		ray.collective.init_collective_group(collective_group='my_name',
 					  backend='nccl',
 					  world_size=20,
 					  rank=rank)
@@ -136,7 +136,7 @@ class PytorchWorker:
 		self.recv = torch.cuda.FloatTensor(10).fill_(0.0)
 
 	def setup_collective_group(self, name, backend, world_size, rank):
-		ray.init_collective_group(collective_group='my_name',
+		ray.collective.init_collective_group(collective_group='my_name',
 					  backend='nccl',
 					  world_size=20,
 					  rank=rank)
