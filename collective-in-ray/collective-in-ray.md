@@ -53,9 +53,10 @@ With this project, Ray users can access a set of readily available collective an
 
 ### Architecture
 An architecture diagram is shown below:
-![Proposed Architecture](arch.png)
 
-The intended functionalities of several key classes are explained below: 
+<p align="center"><img src="arch.png" width=600 /></p>
+
+The intended functionalities of several key classes are briefly explained below: 
 
 #### `Communicator`
 CC-backend-specific implementations covering a few essential functionalities:
@@ -95,9 +96,9 @@ def cupy_func(rank):
 	
 	# This is a blocking call
 	ray.collective.init_collective_group(collective_group='my_name',
-										 backend='nccl',
-										 world_size=4,
-										 rank=rank)
+					     backend='nccl',
+					     world_size=4,
+					     rank=rank)
 	
 	# This is a blocking call
 	ray.collective.allreduce(send, recv)
@@ -120,9 +121,9 @@ class CupyWorker:
 	
 	def setup(self, rank):
 		ray.init_collective_group(collective_group='my_name',
-								  backend='nccl',
-								  world_size=20,
-								  rank=rank)
+					  backend='nccl',
+					  world_size=20,
+					  rank=rank)
 		return True
 	
 	def do_computation(self):
@@ -136,9 +137,9 @@ class PytorchWorker:
 
 	def setup_collective_group(self, name, backend, world_size, rank):
 		ray.init_collective_group(collective_group='my_name',
-								  backend='nccl',
-								  world_size=20,
-								  rank=rank)
+					  backend='nccl',
+					  world_size=20,
+					  rank=rank)
 		return True
 
 	def do_computation(self):
@@ -217,7 +218,7 @@ In some cases (e.g. model parallelism + data parallelism) we might create multip
 
 One alternative architecture is shown in the figure below. 
 
-![Proposed Architecture](arch-alternative.png)
+<p align="center"><img src="arch-alternative.png" width=600 /></p>
 
 Several key differences between this design and the proposed one are:
 - Import the NCCL (MPI, custom collective lib) into Ray in C++, compile together with Ray C++ core.
