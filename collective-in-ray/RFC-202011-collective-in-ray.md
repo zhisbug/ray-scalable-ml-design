@@ -255,8 +255,7 @@ In some cases (e.g. model parallelism + data parallelism) we might create multip
 #### Compatibility with AWS g4dn.12xlarge
 We found some compability issue between Ray and NCCL on AWS g4dn.12xlarge. 
 
-### Alternative Design
-#### Alternative #1: a C++ Architecture with Python Bindings
+### Alternative Design #1: a C++ Architecture with Python Bindings
 
 One alternative architecture is shown in the figure below. 
 
