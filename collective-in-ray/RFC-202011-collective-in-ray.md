@@ -53,7 +53,7 @@ We observe there is an emerging need for Ray to offer some native high-level app
 #### Improvement on CPU Tensor Collective Communication
 For CPU tensors, composing collective communication functions using Ray's object store is feasible, but the performance is suboptimal, compared to highly optimized, vender-specific CC libraries like MPI, NCCL, [GLOO](https://github.com/facebookincubator/gloo), [OneCCL](https://github.com/oneapi-src/oneCCL). See a detailed performance benchmark in this [report](https://github.com/zhisbug/ray-scalable-ml-design/tree/main/pytorch/microbenchmark/primitives/results). Bring these CC libraries into Ray can improve the perfermance of such communication patterns.
 
-#### Improvement on CPU Tensor Collective Communication
+#### Improvement on GPU Tensor Collective Communication
 Ray's object store has limited awareness of GPUs. As a consequence, using Ray's generic APIs to move GPU tensors (collectives or point-to-point) faces severe performance degeneration. See [Hao's benchmarking report](https://github.com/zhisbug/ray-scalable-ml-design/tree/main/pytorch/microbenchmark/primitives/results) and [Lianmin's benchmarking report](https://docs.google.com/spreadsheets/d/1l7aA3LtgXEw1R-kl1V6b87YGPhfDDRemIDgwJEMa4vs/edit?usp=sharing) for details. While this RFC **does NOT** aim to add GPU awareness to Ray's object store, it can address the performance issues for collective and P2P communication of GPU tensors.
 
 #### Performance of Concrete Use Cases
