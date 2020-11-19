@@ -33,7 +33,7 @@ Collective communication (CC) patterns (e.g.`allreduce`, `allgather`) naturally 
 #### Distributed NCCL APIs in Python
 To run on distributed environments, NCCL [relies on MPI or other socket tools](https://docs.nvidia.com/deeplearning/nccl/user-guide/docs/usage/communicators.html) to broadcast the `ncclUniqueId` to distributed processes. This requirement makes it hard to implement distributed NCCL-based applications in Python. To meet this requirement, existing libraries that use NCCL mostly reply on MPI or an additional self-implemented distributed KV-store to setup cross-process coordination. Examples:
 - Horovod depends on `mpirun [args]` (wrapped as `horovodrun [args]`) to invoke distributed processes. 
-- PyTorch implements a [distributed KV Store](https://github.com/pytorch/pytorch/blob/master/torch/lib/c10d/Store.hpp) to enable NCCL to run in distributed environments.
+- PyTorch implements a dedicate [distributed KV Store](https://github.com/pytorch/pytorch/blob/master/torch/lib/c10d/Store.hpp) for NCCL to run in distributed environments.
 
 Also of note that NCCL itself does not have a native Python binding. The only way users can use NCCL in their distributed Python applications are: 
 - Writing C++ instead of Python; 
@@ -69,7 +69,7 @@ An architecture diagram is shown below:
 The intended functionalities of several key classes are briefly explained below: 
 
 #### `Communicator`
-Backend-specific implementations covering a few essential functionalities:
+The `Communicator` and derived subclasses cover backend-specific implementations covering a few essential functionalities:
 - Communicator creation, management, reuse, etc.
 - Thread/CUDA stream creation, management, reuse, when needed
 - tensor type detection, conversion
@@ -77,9 +77,9 @@ Backend-specific implementations covering a few essential functionalities:
 - Other backend-specific implementations such as dtype matching, CUDA stream synchronization, etc.
 
 #### `CollectiveGroup`
-A `CollectiveGroup` coordinates a set of processes (i.e. Ray actors or tasks) participating into collective communication. It accounts for managing the communicators of multiple processes.
+A `CollectiveGroup` accounts for coordinating a set of processes (i.e. Ray actors or tasks) participating into collective communication, and managing their collective communicators.
 
-The `CollectiveGroup` exposes a set of general collective primitive and group APIs for users to create a collective group and perform communication. It dispatches the execution of primitives to the specific collective implementations in backends.
+The `CollectiveGroup` exposes a set of general collective primitive and group APIs for users to create a collective group and perform collective or send/recv communication. It dispatches the execution of primitives to the specific collective implementations in backends.
 
 
 ### APIs
@@ -215,7 +215,7 @@ class CupyWorker(CollectiveAcotr):
 
 
 #### Collective Primitive Signatures
-We will expose a set of collective APIs similar to `torch.distributed` and NCCL, which mostly follow MPI standards, under the namespace `ray.collective`. Some example signatures:
+The collective/group API signatures are similar to `torch.distributed` and NCCL, following MPI standards, under the namespace `ray.collective`. Some example signatures:
 - `ray.collective.init_collective_group(group_name, world_size, rank, backend, ...)`
 - `ray.collective.allreduce(tensor, reduce_op, ...)`
 - `ray.collective.all_gather(tensor_list, tensor, ...)`
@@ -223,7 +223,8 @@ We will expose a set of collective APIs similar to `torch.distributed` and NCCL,
 - `ray.collective.recv(tensor, src_rank, ...)`
 
 See [NCCL Collective](https://docs.nvidia.com/deeplearning/nccl/user-guide/docs/api/colls.html#) and [torch.distributed](https://pytorch.org/docs/stable/distributed.html#) for more examples. 
-A key difference worth mentioning here is that the `tensor` in Ray collective functions could be any of Numpy, PyTorch, or Cupy tensors, as long as their `dtype` matches.
+
+A key difference worth mentioning here is that the `tensor` in Ray collective primitives could be any of Numpy, PyTorch, or Cupy tensors, as long as their `dtype` matches.
 
 #### (Optional) Lower-level APIs
 `ray.collective` namespace dispatches different collective primitive calls to their backend-specific implementations. However, if a user wants to have fine-grained control of the `communicators` and communication backends, some lower-level APIs could be made available. Take the NCCL as an example:
@@ -231,7 +232,7 @@ A key difference worth mentioning here is that the `tensor` in Ray collective fu
 - `ray.collective.nccl.allreduce(tensor, reduce_op, comm, ...)`
 - `...`
 
-Working with this layer of APIs needs to deal with the creation and destruction of `communicators`, and potentially manages the communication threads or CUDA streams when needed manually.
+Working with this layer of APIs however needs to deal with the creation and destruction of `communicators`, and potentially manages the communication threads or CUDA streams when needed manually.
 
 ### Unsolved Problems
 
@@ -246,10 +247,13 @@ ray.get([A.send.remote(), B.recv.remote(), A.recv.remote(), B.send.remote()])
 The above code tries to do two parallel send/recv between two workers A and B using NCCL APIs, and use `ray.get()` to trigger the round trip. It will hang.
 
 #### GPU Stream Management
-NCCL calls need to carefully synchronize GPU streams between workers to ensure correctness, and manage multiple asynchronous GPU streams on each worker to ensure performance. This could be realized using the python bindings of CUDA runtime APIs in Cupy. We haven't figured out the optimal way to allocate/manage streams, but a good reference is the `ProcessGroupNCCL.hpp` in PyTorch.
+Making NCCL calls need to manage multiple asynchronous GPU streams on each worker to ensure performance, while carefully synchronize GPU streams between workers and GPUs to ensure correctness. Engineering-wise this could be realized using the python bindings of CUDA runtime APIs in Cupy, but we haven't figured out the optimal way to allocate/manage streams yet. A good reference is the [ProcessGroupNCCL.hpp](https://github.com/pytorch/pytorch/blob/master/torch/lib/c10d/ProcessGroupNCCL.hpp) in PyTorch.
 
-#### Multiple Concurrent CollectiveGroup 
-In some cases (e.g. model parallelism + data parallelism) we might create multiple CollectiveGroups, in which some groups perform `allreduce` synchronization of gradients for data parallelism, while other groups perform `send/recv` P2P communications between two model partitions. This might require creating multiple `CollectiveGroups` within a  same pool of Ray actors or tasks, which in turn requires managing collective communicators, communication threads, and GPU streams. We need to figure out some details on this later during implementation.
+#### Multiple Concurrent Collective Groups 
+In some cases (e.g. model parallelism + data parallelism) we might create multiple `CollectiveGroups` within a same pool of Ray actors or tasks, in which some groups perform `allreduce` synchronization of gradients for data parallelism, while other groups perform `send/recv` P2P communications between two model partitions. This might require carefully managing collective communicators, communication threads, and GPU streams and will complicate the implementation. We need to figure out more details on this later during implementation.
+
+#### Compatibility with AWS g4dn.12xlarge
+We found some compability issue between Ray and NCCL on AWS g4dn.12xlarge. 
 
 ### Alternative Design
 #### Alternative #1: a C++ Architecture with Python Bindings
@@ -259,55 +263,59 @@ One alternative architecture is shown in the figure below.
 <p align="center"><img src="arch-alternative.png" width=600 /></p>
 
 Several key differences between this design and the proposed one are:
-- Import the NCCL (MPI, custom collective lib) into Ray in C++, compile together with Ray C++ core.
-- Implement the communicator creation, management, and collective group creations, management all in C++. Implement a set of collective communication primitive APIs in C++. Then provide python APIs on top of them as Python bindings.
+- Import the NCCL libraries (same for MPI, or other custom CCLs) into Ray in C++; compile them together with Ray C++ core.
+- Implement the communicator creation, management, and collective group creation/management all in C++. Implement a set of collective communication primitive APIs in C++. Then provide python APIs on top of them as Python bindings.
 
 Its pros and cons are discussed below:
 #### Pros
 - Get rid of Cupy and MPI4py dependencies.
 - Might observe slight performance improvement.
-- In the future, it might be easier to generalize this set of CC APIs to work with Ray object store, and support collective communication between Ray objects or ObjectRefs (@Ion).
+- In the future, it might be easier to generalize this set of CC APIs to work with Ray object store, and support collective communication of Ray objects or ObjectRefs (@Ion).
 - It is easier to extrapolate to newer custom collective communication libraries, such as Intel oneCCL, because normally these libraries are implemented and released in C/C++, *without* Python bindings.
 
 #### Cons
-- For the NCCL part, we are essentially redoing a lot of engineering that Cupy/PyTorch have done, including: NCCL Python bindings, GPU memory management, some CUDA runtime API wrappers, definitions of CUDA tensor data structures, etc.
+- For the NCCL part, we are essentially redoing a lot of engineering that Cupy/PyTorch have done, including: NCCL Python bindings, GPU memory management, some CUDA runtime API wrappers, definitions of GPU data structures, etc.
 - For the MPI part, we are redoing a lot of engineering that Horovod has done.
 - Apparently implementing things in C++ might significantly extend the development cycle of this project.
 
 
 ### Alternative #2: Using UCX/UCX-py as the communication backend
-We have also considered using [UCX](https://github.com/openucx/ucx) and [UCX-py](https://github.com/rapidsai/ucx-py) for P2P communication (in particular, for GPU tensor), and then implementing collective communication APIs using its P2P API. We deny this option with the following discussion of pros and cons:
+We have also considered using [UCX](https://github.com/openucx/ucx) and [UCX-py](https://github.com/rapidsai/ucx-py) for P2P communication (in particular, for GPU tensors), and then implementing collective communication functions based on P2P API. We deny this option with the following discussion of pros and cons:
 
 #### Cons
-- According to some [benchmarking results](https://docs.google.com/spreadsheets/d/1l7aA3LtgXEw1R-kl1V6b87YGPhfDDRemIDgwJEMa4vs/edit?usp=sharing) generated by Lianmin, UCX-py shows inferior performance compared to NCCL on GPU tensor collective communication. This gap is substantial.
+- According to Lianmin's [benchmarking results](https://docs.google.com/spreadsheets/d/1l7aA3LtgXEw1R-kl1V6b87YGPhfDDRemIDgwJEMa4vs/edit?usp=sharing), UCX-py shows inferior performance compared to NCCL on GPU tensor collective or send/recv communication. This gap is substantial.
 - The UCX C++ backend is under development. Compared to NCCL, it is less mature -- we observe less cases in which UCX is adopted. In contrast, MPI/NCCL is the SoTA CPU/GPU collective communication library, esp. in distributed ML -- A major goal of this project is to build the communication backend infra for the two distributed ML projects: NumS and RayML.
 - The UCX-py package is at a rather preliminary stage, and we find it not easy to use, e.g. building applications with its APIs heavily involves using Python3.8+ AsyncIO.
 
 #### Pros
-- UCX is supposed to offer a device-agnostic "one-size-fit-all" solution for cross-process communication. It aims to eventually provide some features to auto-detect the device topology and properties and auto-optimize communication algorithms. 
+- UCX is supposed to offer a device-agnostic "one-size-fit-all" solution for cross-process communication. It aims to eventually provide some features to auto-detect the device topology and properties, and then auto-optimize communication algorithms. 
 - In several scenarios where we want to communicate messages between CPU RAM and GPUs (cpu -> gpu send/recv), it might be advantageous.
 
 ### Other Considerations
-We want to make it light-weight so we can develop most of the needed features in a fast pace, then refocus on the development of NumS and RayML core. Hence, we tend to favor design that can:
-- Avoid redoing some of the engineering that existing projects have done
+We want to make it light-weight so we can develop most of the needed features in a fast pace, then refocus on the development of NumS and RayML core. Hence, we tend to favor design that:
+- Avoids redoing some of the engineering that existing projects have done
 - If an implementation can be done either in C++ or Python, we lean toward Python, unless there is a substantial performance gap.
 
 
 ### Performance Implications
 In summary, the performance of collective primitives of CPU tensors in Ray can improve 2x-10x (latency), matching MPI/GLOO performance. Collective communication of GPU tensors in Ray can improve 10x - 1000x, matching NCCL performance.
-- See [micro benchmark#1](https://github.com/zhisbug/ray-scalable-ml-design/tree/main/pytorch/microbenchmark/primitives/results) and [microbenchmark#2](https://docs.google.com/spreadsheets/d/1l7aA3LtgXEw1R-kl1V6b87YGPhfDDRemIDgwJEMa4vs/edit?usp=sharing) for the performance improvement for each collective and P2P communication primitives, on different cluster setups.
-- See an [end-to-end benchmark](https://github.com/zhisbug/ray-scalable-ml-design/spacy) on training a custom Spacy NLP pipeline.
+- See [micro benchmark#1](https://github.com/zhisbug/ray-scalable-ml-design/tree/main/pytorch/microbenchmark/primitives/results) for the results on collective primitives in a 2-gpu node, and a (2, 4, 8, 16)-node cluster where each node has 1 GPU.
+
+- See [microbenchmark#2](https://docs.google.com/spreadsheets/d/1l7aA3LtgXEw1R-kl1V6b87YGPhfDDRemIDgwJEMa4vs/edit?usp=sharing) for the performance improvement forP2P communication, on AWS g4dn.12xlarge, AWS p3.8xlarge, and AWS p2.8xlarge
+
+- (TODO: Hao) Provide end-to-end results on Spacy NLP pipeline.
 
 ### Dependencies
-If choosing NCCL as the CC backend, the proposed design will introduce [Cupy](https://github.com/cupy/cupy) as a new dependency. Users need to identify the right Cupy version to install based on their CUDA version. Cupy has a bundled version of NCCL, which will be used by default. Alternatively, users can install their desired NCCL version and tell Ray (Cupy) to use that version.
-- Note: this Cupy dependency could be removed in longer run by building NCCL into Ray and expose NCCL APIs as python bindings. 
+If choosing NCCL as the CCL backend, the proposed design will introduce [Cupy](https://github.com/cupy/cupy) as a new dependency. Users need to identify the right Cupy version to install based on their CUDA version. Cupy has a bundled version of NCCL, which will be used by default. Alternatively, users can install their desired NCCL version and tell Ray (Cupy) to use that version.
+- This Cupy dependency could be removed in longer run by building NCCL into Ray and expose NCCL APIs as python bindings. 
+- send/recv is supported with NCCL>=2.7.4.
  
 If choosing MPI as the CC backend, the proposed design will introduce [MPI4py](https://github.com/mpi4py/mpi4py) as a new dependency.
 
 
 ### Engineering Impact
--  Engineering impact: Minimal change in Ray binary. All the code will be implemented in Python so no impact on building time.
--   Maintenance: NumS and RayML team will develop and maintain it. This code relies on Ray to be tested in a distributed environment.
+-  Engineering impact: Minimal change in Ray binary. All the code will be implemented in Python so no impact on Ray building time.
+-  Maintenance: NumS and RayML team will develop and maintain it. This code relies on Ray to be tested in a distributed environment.
 
 
 ### Platforms and Environments
@@ -315,13 +323,13 @@ If choosing MPI as the CC backend, the proposed design will introduce [MPI4py](h
 
 ### Best Practices
 Once this feature gets into Ray: 
-- In general, we recommend this set of APIs to perform collective communication of tensors between distributed actors and tasks, regardless of the device that hosts the tensors (CPU RAM or GPU memory).
+- In general, we recommend this set of APIs to perform collective communication of Python tensors between distributed actors and tasks, regardless of the type of device that hosts the tensors (CPU RAM or GPU memory).
 - We strongly recommend this set of APIs to perform collective communication and point-to-point communication when the tensors are hosted on GPUs.
 
 ### Tutorials and Examples
 
 Some working prototypes can be found [here](https://github.com/zhisbug/ray-scalable-ml-design/tree/main/cupy).
-Many of the design here draw some insights from `torch.distributed`.
+Many of the design here draws some insights from `torch.distributed`.
 
 ### Compatibility
 
