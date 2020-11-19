@@ -74,7 +74,7 @@ An architecture diagram is shown below:
 The intended functionalities of several key classes are briefly explained below: 
 
 #### `Communicator`
-The `Communicator` and derived subclasses cover backend-specific implementations covering a few essential functionalities:
+The `Communicator` and derived subclasses cover backend-specific implementations for a few essential functionalities:
 - Communicator creation, management, reuse, etc.
 - Thread/CUDA stream creation, management, reuse, when needed
 - tensor type detection, conversion
