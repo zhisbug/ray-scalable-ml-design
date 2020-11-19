@@ -10,16 +10,16 @@
 
 ## Objective
 
-This RFC proposes to add a set of *Python-based* collective and send/recv communication APIs into Ray, for *both CPU and GPU* tensors, based on several established collective communication backends, including [NCCL](https://github.com/NVIDIA/nccl), [MPI](https://github.com/mpi4py/mpi4py), as well as the original Ray object store (hence gRPC backend). 
+This RFC proposes to add a set of *Python-based* collective and send/recv communication APIs into Ray, for *both CPU and GPU* tensors, based on several established collective communication backends, including [NCCL](https://github.com/NVIDIA/nccl), [MPI](https://github.com/mpi4py/mpi4py), as well as the original Ray object store (hence gRPC). 
 
-This set of APIs will enable Ray users to conveniently perform collective communication of several types of Python tensors in Ray actors and tasks, for their performance-critical distributed applications, such as (GPU-based) distributed machine learning, or other HPC applications. 
+This set of APIs will enable Ray users to conveniently perform collective communication of several types of Python tensors in Ray actors and tasks, for their performance-critical applications, such as (GPU-based) distributed machine learning, or other HPC applications. 
 
-This set of APIs also serve as a shared infrastructure for the ongoing two Ray-derived projects: [NumS](https://github.com/nums-project/nums) and [RayML](https://github.com/zhisbug/ray-scalable-ml-design/).
+This set of APIs also serve as a shared infrastructure for the two ongoing Ray-derived projects: [NumS](https://github.com/nums-project/nums) and [RayML](https://github.com/zhisbug/ray-scalable-ml-design/).
 
 ### Non-goals
 
-- For now, these APIs aim to only support **python Tensors** (e.g. Numpy, Cupy, PyTorch tensors), but **not** arbitrary Ray Objects or ObjectRefs.
- - These APIs are not obligated to perform communication through Ray object store. Instead, an option is provided in the APIs to allow choosing Ray object store (hence gPRC) as the backend.
+- For now, these APIs aim to only support **python Tensors** (i.e. Numpy, Cupy, PyTorch tensors), but **NOT** arbitrary Ray Objects or ObjectRefs.
+- These APIs are not obligated to perform communication through Ray object store. Instead, an option is provided in the APIs to allow choosing Ray object store (gPRC) as the backend.
 
 ## Motivation
 
@@ -27,27 +27,36 @@ We want to flesh out several value propositions that drive this project, with a 
 
 ### Improve Programming Convenience 
 
-- **General collective communication APIs in Ray**: Collective communication (CC) pattern (e.g.`allreduce`, `allgather`) naturally emerge in many distributed computing applications in Ray. While in practice Ray users can compose CC functions using Ray's generic APIs as a series of RPC calls, directly providing such CC APIs would add significant convenience.
+#### General collective communication APIs in Ray
+Collective communication (CC) patterns (e.g.`allreduce`, `allgather`) naturally emerge in many distributed computing applications in Ray. While in practice Ray users can compose CC functions using Ray's generic APIs as a series of RPC calls, directly providing such CC APIs would add significant convenience.
 
-- **Distributed NCCL APIs in Python**: NCCL relies on MPI or other socket tools to broadcast the `ncclUniqueId` to distributed processes, to run on distributed environments. This requirement makes it hard to implement distributed NCCL-based applications in Python. Existing libraries that use NCCL mostly reply on MPI or self-implemented distributed store to setup cross-process coordination in distributed environments. Examples include Horovod, which depends on `mpirun [args]` to invoke distributed processes; Or PyTorch, which implements a [Distributed Key-value Store](https://github.com/pytorch/pytorch/blob/master/torch/lib/c10d/Store.hpp) to enable NCCL to run in distributed environments. 
-Also of note that NCCL itself does not have a high-level Python binding. The only way users can use NCCL for their distributed Python applications are: (1) writing C++ instead of Python; (2) constraint their code within PyTorch/TensorFlow/Horovod which natively support NCCL; (3) using Cupy plus some other distributed stitching tools like MPI(which involves low-level CUDA code such as stream management, etc., and is error-prone). 
-Essentially, there is a gap to write distributed Python applications using NCCL. Ray naturally fills this gap -- Ray has a distributed store and high-level sticking APIs. Putting NCCL into Ray and wraps it into high-level Python APIs makes it easy to use NCCL, which in turn benefits Ray.
+#### Distributed NCCL APIs in Python
+To run on distributed environments, NCCL [relies on MPI or other socket tools](https://docs.nvidia.com/deeplearning/nccl/user-guide/docs/usage/communicators.html) to broadcast the `ncclUniqueId` to distributed processes. This requirement makes it hard to implement distributed NCCL-based applications in Python. To meet this requirement, existing libraries that use NCCL mostly reply on MPI or an additional self-implemented distributed KV-store to setup cross-process coordination. Examples:
+- Horovod depends on `mpirun [args]` (wrapped as `horovodrun [args]`) to invoke distributed processes. 
+- PyTorch implements a [distributed KV Store](https://github.com/pytorch/pytorch/blob/master/torch/lib/c10d/Store.hpp) to enable NCCL to run in distributed environments.
 
-- **Interoperatorability between Python tensor types**: Nowadays ML frameworks or computing libraries expose some sorts of collective communication APIs for their framework-native tensor types, such as `torch.distributed.allreduce(x: torch.Tensor)` in PyTorch, or `tf.collective_ops` in TensorFlow. The collective APIs built on top of Ray can slightly relax this constraint on tensor types and allow collective communication of tensors from different computing libraries, such as a Cupy tensor and a PyTorch tensor, as long as the tensor classes expose a `data_ptr()` method which points to the address of the tensor (which is true for Numpy, Cupy, PyTorch).
+Also of note that NCCL itself does not have a native Python binding. The only way users can use NCCL in their distributed Python applications are: 
+- Writing C++ instead of Python; 
+- Constrainting their code within PyTorch/TensorFlow/Horovod which natively support NCCL; 
+- Using Cupy low-level (cupy.cuda.nccl) APIs (which involves CUDA code such as stream management and is error-prone) plus some other distributed stitching tools like MPI. 
 
-- **Auxiliary applications**: we observe there is an emerging need for Ray to offer some native high-level application interfaces, such as a *sharded parameter server*, or *collective allreduce strategy*, similar to `tf.distributed.CollectiveAllReduceStrategy`. The targeted users of these interfaces are those who conduct distributed ML loads either without using TensorFlow or PyTorch, or mixing the usage of TensorFlow or PyTorch. For example, [Spacy](https://spacy.io/) has a community of users who build ML applications using their in-house framework [Thinc](https://thinc.ai/), which replies on Ray to provide distributed computing support. A set of high-performance collective APIs are the cornerstone of these applications.
+Indeed, there is a gap to implement distributed Python applications using NCCL -- Ray naturally fills this gap: Ray has a distributed store and high-level stitching APIs. Putting NCCL into Ray and wraps it into high-level Python APIs makes it easy to use NCCL, which in turn might benefit Ray.
+
+- **Collective communication of multiple types of Python tensor**: Nowadays ML frameworks expose some sorts of collective communication APIs for their framework-native tensor types, such as `torch.distributed.allreduce(x: torch.Tensor)` in PyTorch, or `tf.collective_ops` in TensorFlow. The collective APIs built on top of Ray can slightly relax this constraint on tensor types -- by allowing some extent of interoperatability  between tensor types: collective communication of tensors from different computing libraries, such as allreducing a Cupy tensor and a PyTorch tensor, as long as the tensor classes expose a `data_ptr()` method that points to the address of the tensor (which is true for Numpy, Cupy, PyTorch).
+
+- **Auxiliary applications**: we observe there is an emerging need for Ray to offer some native high-level application interfaces, such as a *sharded parameter server*, or *collective allreduce strategy*, similar to `tf.distributed.CollectiveAllReduceStrategy`. The targeted users of these interfaces are those who conduct distributed ML loads either without using TensorFlow or PyTorch, or mixing the usage of TensorFlow or PyTorch. For example, [Spacy](https://spacy.io/) has a community of users who build ML applications using their in-house framework [Thinc](https://thinc.ai/), which replies on Ray to provide distributed computing support. They will likely find a Ray-native parameter server implementation helpful. A set of high-performance collective APIs are the cornerstone of these applications.
 
 ### Improve Performance
 
 - For CPU tensors, composing collective communication functions using Ray's object store is feasible, but the performance is suboptimal, compared to highly optimized, vender-specific CC libraries like MPI, NCCL, [GLOO](https://github.com/facebookincubator/gloo), [OneCCL](https://github.com/oneapi-src/oneCCL). See a detailed performance benchmark in this [report](https://github.com/zhisbug/ray-scalable-ml-design/tree/main/pytorch/microbenchmark/primitives/results). Bring these CC libraries into Ray can improve the perfermance of such communication patterns.
 
-- Ray's object store has limited awareness of GPUs. As a consequence, using Ray's generic APIs to move GPU tensors (collectives or point-to-point) faces severe performance degeneration. See [Hao's benchmarking report](https://github.com/zhisbug/ray-scalable-ml-design/tree/main/pytorch/microbenchmark/primitives/results) and [Lianmin's benchmarking report](https://docs.google.com/spreadsheets/d/1l7aA3LtgXEw1R-kl1V6b87YGPhfDDRemIDgwJEMa4vs/edit?usp=sharing) for details. While this RFC does NOT aim to add GPU awareness to Ray's object store, it can address the performance issues for collective and P2P communication of GPU tensors.
+- Ray's object store has limited awareness of GPUs. As a consequence, using Ray's generic APIs to move GPU tensors (collectives or point-to-point) faces severe performance degeneration. See [Hao's benchmarking report](https://github.com/zhisbug/ray-scalable-ml-design/tree/main/pytorch/microbenchmark/primitives/results) and [Lianmin's benchmarking report](https://docs.google.com/spreadsheets/d/1l7aA3LtgXEw1R-kl1V6b87YGPhfDDRemIDgwJEMa4vs/edit?usp=sharing) for details. While this RFC **does NOT** aim to add GPU awareness to Ray's object store, it can address the performance issues for collective and P2P communication of GPU tensors.
 
 - Some Ray users (e.g. Spacy) rely on Ray as a primary tool to provide distributed communication support. They face some performance challenges caused by collective communication. These APIs will address their performance issues.
 
 ## User Benefit
 
-With this project, Ray users can access a set of readily available collective and send/recv APIs in pure Python, with MPI/NCCL/Ray object store as optional backends, supporting both CPU and GPU tensors in Numpy, Cupy, or PyTorch.
+With this project, Ray users can access a set of readily available collective and send/recv APIs in pure Python, with MPI/NCCL/Ray as optional backends, supporting both CPU and GPU tensors in Numpy, Cupy, and PyTorch.
 
 
 ## Design Proposal
@@ -60,17 +69,17 @@ An architecture diagram is shown below:
 The intended functionalities of several key classes are briefly explained below: 
 
 #### `Communicator`
-CC-backend-specific implementations covering a few essential functionalities:
+Backend-specific implementations covering a few essential functionalities:
 - Communicator creation, management, reuse, etc.
 - Thread/CUDA stream creation, management, reuse, when needed
 - tensor type detection, conversion
 - Invocation of the third-party communication APIs
-- Other backend-specific implementations such as type matching, stream synchronization, etc.
+- Other backend-specific implementations such as dtype matching, CUDA stream synchronization, etc.
 
 #### `CollectiveGroup`
-A `CollectiveGroup` coordinates a set of processes (e.g. Ray actors or tasks) participating into collective communication. It accounts for managing the communicators of multiple processes.
+A `CollectiveGroup` coordinates a set of processes (i.e. Ray actors or tasks) participating into collective communication. It accounts for managing the communicators of multiple processes.
 
-The `CollectiveGroup` exposes a set of general collective primitive and group APIs for users to create a collective group and perform communication. It dispatches the execution of APIs to the specific collective implementations in backends.
+The `CollectiveGroup` exposes a set of general collective primitive and group APIs for users to create a collective group and perform communication. It dispatches the execution of primitives to the specific collective implementations in backends.
 
 
 ### APIs
@@ -82,9 +91,9 @@ The core problem to solve in designing APIs is to expose a minimal and least dis
 - `rank`: the rank of this participant
 - `backend`: the backend to use, NCCL, MPI, or Ray Object Store (gRPC)
 
-Below I list a few proposals. **Note** the proposals are **very preliminary** and need extensive help and discussion among NumS, RayML and AnyScale developers to get into the right shape.
+Below I list a few API proposals. **Note** the proposals are **very preliminary** and need extensive help and discussion among NumS, RayML and AnyScale developers to get into the right shape.
 
-####  User APIs Proposal #1: mimicking torch.distributed
+####  User APIs Proposal #1: Basic APIs
 ```python
 # Example #1
 import ray
@@ -92,18 +101,20 @@ import cupy
 
 @ray.remote(num_gpus=1) 
 def cupy_func(rank):
-	send = cupy.ones((10,), dtype=cupy.float32)
-	recv = cupy.ones((10,), dtype=cupy.float32)
+    send = cupy.ones((10,), dtype=cupy.float32)
+    recv = cupy.ones((10,), dtype=cupy.float32)
 	
-	# This is a blocking call
-	ray.collective.init_collective_group(collective_group='my_name',
-					     backend='nccl',
-					     world_size=4,
-					     rank=rank)
-	
-	# This is a blocking call
-	ray.collective.allreduce(send, recv)
-	return recv
+    # This is a blocking call
+    ray.collective.init_collective_group(collective_group='my_name',
+                                         backend='nccl',
+                                         world_size=4,
+                                         rank=rank)
+
+    # This is a blocking call
+    ray.collective.allreduce(send, recv)
+    # In-place version:
+    # ray.collective.allreduce(send) 
+    return recv
 
 futures = [cupy_func.remote(i) for i in range(4)]
 print(ray.get(futures))
@@ -116,43 +127,45 @@ import cupy
 
 @ray.remote
 class CupyWorker:
-	def __init__(self):
-		self.send = cupy.ones((10,), dtype=cupy.float32)
-		self.recv = cupy.zeros((10,), dtype=cupy.float32)
+    def __init__(self):
+        self.send = cupy.ones((10,), dtype=cupy.float32)
+        self.recv = cupy.zeros((10,), dtype=cupy.float32)
+
+    def setup(self, rank):
+        ray.collective.init_collective_group(collective_group='my_name',
+                             backend='nccl',
+                             world_size=20,
+                             rank=rank)
+        return True
 	
-	def setup(self, rank):
-		ray.collective.init_collective_group(collective_group='my_name',
-					  backend='nccl',
-					  world_size=20,
-					  rank=rank)
-		return True
-	
-	def do_computation(self):
-		ray.collective.allreduce(self.send, self.recv)
+    def do_computation(self):
+        ray.collective.allreduce(self.send, self.recv)
 	
 @ray.remote
 class PytorchWorker:
-	def __init__(self):
-		self.send = torch.cuda.FloatTensor(10).fill_(1.0)
-		self.recv = torch.cuda.FloatTensor(10).fill_(0.0)
+    def __init__(self):
+        self.send = torch.cuda.FloatTensor(10).fill_(1.0)
+        self.recv = torch.cuda.FloatTensor(10).fill_(0.0)
 
-	def setup_collective_group(self, name, backend, world_size, rank):
-		ray.collective.init_collective_group(collective_group='my_name',
-					  backend='nccl',
-					  world_size=20,
-					  rank=rank)
-		return True
+    def setup_collective_group(self, name, backend, world_size, rank):
+        ray.collective.init_collective_group(collective_group='my_name',
+                             backend='nccl',
+                             world_size=20,
+                             rank=rank)
+        return True
 
-	def do_computation(self):
-		# Do some computation
-		ray.collective.allreduce(self.send, self.recv)
-		return self.secv
+    def do_computation(self):
+        # Do some computation
+        ray.collective.allreduce(self.send, self.recv)
+        return self.secv
 		
 
-# Since the constructor of the workers have `init_collective_group`
+# Declare 10 Cupy workers and 10 PyTorch workers
 actors = []
 actors.extend([CupyWorker.remote() for i in range(10)])
 actors.extend([PytorchWorker.remote() for i in range(10)])
+
+# Setup collective groups
 ray.wait([a.setup.remote(rank) for rank, a in enumurate(actors)])
 
 # Note: interoperatability between cupy and pytorch
@@ -177,6 +190,30 @@ pool = CollectivePool(actors, ranks, name='default')
 futures = [a.do_computation.remote(i) for a in actors]
 # ...
 ```
+
+#### User APIs Proposal #3: providing a `CollectiveActor`
+Ray provides a base collectiveActor class which has some built-in setup functions for collective group. Users are expected to implement actors 
+based on this class.
+
+```python
+@ray.remote()
+class CollectiveActor: 
+    def __init__(self, group="default", world_size=1, rank=0, backend='ray', *args, **kwargs):
+        self.group_name = group
+        self.world_size = world_size
+        self.rank = rank
+        self.backend = backend
+        self.setup()
+
+    def setup():
+        ray.collective.init_collective_group(self.group, self.world_size, self.rank, self.backend)
+    
+	
+class CupyWorker(CollectiveAcotr):
+    pass
+```
+
+
 #### Collective Primitive Signatures
 We will expose a set of collective APIs similar to `torch.distributed` and NCCL, which mostly follow MPI standards, under the namespace `ray.collective`. Some example signatures:
 - `ray.collective.init_collective_group(group_name, world_size, rank, backend, ...)`
