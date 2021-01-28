@@ -13,9 +13,9 @@ When running for the first time, run ```startup.sh```. Then, configure the machi
 Batch Size: 1000, 10 sentences per document, evaluate every 200 iteration
 
 | #GPU     | Total Throughput (words/sec)   | Average Throughput (words/sec) |Total Throughput (sentences/sec) | Average Throughput (sentences/sec) |
-:------------- | :---------- | :----------|:----------|:----------|:----------|
-|  1 | 4439.01   |  4408.82 |18.30  | 18.18 | 
-| 2   | 3657.02 | 3603.41  |15.08 | 14.86 |
+:-- | :------ | :-------| :-----|:------|
+| 1 | 4439.01 | 4408.82 | 18.30 | 18.18 | 
+| 2 | 3657.02 | 3603.41 | 15.08 | 14.86 |
 
 ### On Cluster:
 
