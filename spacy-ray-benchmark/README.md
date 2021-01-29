@@ -30,7 +30,7 @@ Batch size 250, 1 sentence per document, evaluate every 1000 iteration, run 3 ti
 | 12 | 3888.65 | 163.23 | 160.40 | 6.73 | 0.51 | 
 | 16 | 5322.44 | 143.21 | 219.54 | 5.91 | 0.49 | 
 
-![Throughput vs. #GPU](throughput_chart.png)
+![Throughput vs. #GPU](charts/throughput_chart1.png)
 
 Batch size 1000, 1 sentence per document, evaluate every 1000 iteration, run 3 times and calculate average and sample std
 
@@ -42,3 +42,5 @@ Batch size 1000, 1 sentence per document, evaluate every 1000 iteration, run 3 t
 | 8  | 7772.29  | 94.68  | 319.52 | 3.89  | 0.65 |
 | 12 | 11815.41 | 229.57 | 485.73 | 9.44  | 0.63 | 
 | 16 | 15717.95 | 328.02 | 646.16 | 13.49 | 0.62 | 
+
+![Throughput vs. #GPU](charts/throughput_chart2.png)
