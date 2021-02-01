@@ -26,11 +26,16 @@ class CollectiveActorClass:
     def get_pos(self, objref):
         return self._pos[objref]
 
-    def promote_to_raystore(self, objref):
-        #TODO: mechanism to make things to raystore. 
+    def promote_to_raystore(self, objref): 
         if objref not in self._pos:
             raise KeyError("objref does not exist in {}'s pos store.".format(self))
+        obj = self._pos.pop(objref)
+        if obj:
+            ray_ref = ray.put(obj)
+            return ray_ref
 
+        # didn't work.    
+        return -1
 
 
 def pos(method):
@@ -95,7 +100,13 @@ class MyActor:
 
 
 if __name__ == '__main__':
+    print("what")
     actor = MyActor.remote()
     actor.get_buffer.remote()
-    actor.get_buffer.remote()
+    ref = actor.get_buffer.remote()
+    print('DEBUG: reached')
+    ## Synchronizatiion issue. POS may finish before promote or get. What to do?
+    raay_ref = actor.promote_to_raystore.remote(ref)
+    print(raay_ref)
+    print(ray.get(raay_ref))
     
