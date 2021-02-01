@@ -28,7 +28,9 @@ class CollectiveActorClass:
 
     def promote_to_raystore(self, objref):
         #TODO: mechanism to make things to raystore. 
-        pass
+        if objref not in self._pos:
+            raise KeyError("objref does not exist in {}'s pos store.".format(self))
+
 
 
 def pos(method):
@@ -36,15 +38,29 @@ def pos(method):
     POS Wrapper for CollectiveActor methods.
     """
     def _modified(*args, **kwargs):
+        if not len(args) > 0:
+            # Brian's notes:
+            # We can implement an @pos for non-methods, e.g. standalone functions.
+            # let me know if that seems like something we would be interested in
+            # doing. So far the API specifications only list for methods. 
+            raise TypeError("Must be a method!")
         #first must be object for method
-        self = args[0]
-        print(type(self))
+        collective_actor = args[0]
 
+        if not isinstance(collective_actor, CollectiveActorClass):
+            raise TypeError("Can only wrap @pos for Collective Actors.")
 
         rv = method(*args, **kwargs)
-        objref = self._gen_pos_ref(rv)
-        self.set_pos(objref, rv)
-        print("DEBUG: stored {} at {}".format(rv, objref))
+        objref = collective_actor._gen_pos_ref(rv)
+        collective_actor.set_pos(objref, rv)
+        print("DEBUG: stored {} at objref {}".format(
+                                                    collective_actor.get_pos(objref), 
+                                                    objref))
+
+        # I wrote "return" explicitly because it's important that
+        # this function returns nothing. This way Ray knows not to
+        # generate an objref, and not to store anything. Otherwise,
+        # there'd be no point of pos. 
         return
 
     return _modified
@@ -68,16 +84,18 @@ Testing Code.
 @CollectiveActor
 class MyActor:
     def __init__(self):
-        self.buffer = "objresct"
+        self.buffer = "obj"
 
     # get_buffer was a user function that returns self.buffer.
     @pos
     def get_buffer(self):
         buffer = self.buffer
+        self.buffer = "changed"
         return buffer
 
 
 if __name__ == '__main__':
     actor = MyActor.remote()
-    print(actor.get_buffer.remote())
+    actor.get_buffer.remote()
+    actor.get_buffer.remote()
     
